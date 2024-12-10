@@ -51,14 +51,12 @@ def create_masks_from_coco(dataset_path, splits):
         annotations = coco_data['annotations']
         categories = {category['id']: category['name'] for category in coco_data['categories']}  # Map category_id to class name
 
+
         # loop through all images and create masks (with a loading bar!)
         for img_info in tqdm(images.values()):
 
-            # Get image resolution
-            img_file = os.path.join(split_path, img_info['file_name'])
-            height, width = img_info['height'], img_info['width']
-
             # Create black mask same size as image
+            height, width = img_info['height'], img_info['width']
             mask = np.zeros((height, width), dtype=np.uint8)
 
             # Filter annotations for the current image
@@ -97,7 +95,7 @@ def create_masks_from_coco(dataset_path, splits):
 
 # Root dataset folder
 dataset_path = "Datasets/Dental project.v19i.coco-1"
-splits = ["test", "train", "valid"]
+splits = ["test"]#, "train", "valid"]
 
 # Call function to create masks
 create_masks_from_coco(dataset_path, splits)
