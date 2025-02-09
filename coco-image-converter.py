@@ -6,7 +6,7 @@ from PIL import Image
 from tqdm import tqdm # Progress bar
 
 # Class segment brightness (TESTING)
-class_brightness = 35
+class_brightness = 1
 
 # Define class IDs 
 class_mapping = {
@@ -55,7 +55,7 @@ def create_masks_from_coco(dataset_path, splits):
         # loop through all images and create masks (with a loading bar!)
         for img_info in tqdm(images.values()):
 
-            # Create black mask same size as image
+            # Create black mask same size as imageS
             height, width = img_info['height'], img_info['width']
             mask = np.zeros((height, width), dtype=np.uint8)
 
