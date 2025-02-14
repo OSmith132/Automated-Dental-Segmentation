@@ -4,22 +4,28 @@ import cv2
 from tqdm import tqdm 
 import os
 from PIL import Image
+import torch
 import matplotlib.pyplot as plt
-
+import numpy as np
+from transformers import SamProcessor
+from segment_anything import sam_model_registry
 
 # Holds information and gives access to a dataset spliit of images. Uses on-the-fly loading.
 class ImageMaskDataset(Dataset):
-    def __init__(self, dataset_path, split):
+    def __init__(self, dataset_path, split, processor):
         """
         Args:
             dataset_path (str): Path to the dataset.
             split (str): Split of the dataset (e.g., 'train', 'test').
+            sam_checkpoint (str): Path to the local SAM model checkpoint.
             transform (callable, optional): A function/transform to apply to the images.
         """
+        self.processor = processor
         self.dataset_path = dataset_path
         self.split = split
-        self.transform = transforms.ToTensor() #transforms.Compose([transforms.Resize((1024, 1024)), transforms.ToTensor()])
-        
+
+        self.transform = transforms.ToTensor()  # Apply default transformation
+
         # Get the dirs for images and masks
         self.split_dir = os.path.join(dataset_path, split)
         self.mask_dir = os.path.join(self.split_dir, "masks")
@@ -38,13 +44,14 @@ class ImageMaskDataset(Dataset):
             for filename in tqdm(sorted(os.listdir(self.split_dir)))
             if filename.endswith(".jpg") and os.path.isfile(os.path.join(self.split_dir, filename))
         ]
-    
+        
+
+        
 
     # Return number of images in the dataset split
     def __len__(self):
         return len(self.image_mask_pairs)
     
-    # Return item by index []
     def __getitem__(self, idx):
         img_path, mask_path = self.image_mask_pairs[idx]
 
@@ -57,13 +64,25 @@ class ImageMaskDataset(Dataset):
         image = Image.fromarray(image)
         mask = Image.fromarray(mask)
 
-        # Apply transformation if defined
-        if self.transform:
-            image = self.transform(image)
-            mask = self.transform(mask)
+        # Preprocess image using SAM processor
+        inputs = self.processor(images=image, return_tensors="pt")  # Process the image to tensors
+        image = inputs["pixel_values"].squeeze(0)  # Remove batch dimension added by default
 
-        
-        return image, mask
+        # Resize the mask to match the image size
+        resize_transform = transforms.Resize((1024, 1024), interpolation=transforms.InterpolationMode.NEAREST)
+        mask = resize_transform(mask)
+
+        # Convert mask to tensor (no normalization)
+        mask = torch.tensor(np.array(mask), dtype=torch.long)  # Ensure mask is long type for segmentation
+
+        # Return as a dictionary
+        return {
+            "pixel_values": image,
+            "ground_truth_mask": mask
+        }
+
+
+
 
 
     def show_image_mask(self, idx):
