@@ -23,8 +23,9 @@ class ImageMaskDataset(Dataset):
         self.processor = processor
         self.dataset_path = dataset_path
         self.split = split
+        
+        self._return_as_tensor = False
 
-        self.transform = transforms.ToTensor()  # Apply default transformation
 
         # Get the dirs for images and masks
         self.split_dir = os.path.join(dataset_path, split)
@@ -46,12 +47,28 @@ class ImageMaskDataset(Dataset):
         ]
         
 
+
+    @property
+    def return_as_tensor(self):
+        """Getter for flag"""
+        return self._return_as_tensor
+
+    @return_as_tensor.setter
+    def return_as_tensor(self, value):
+        """Setter for flag"""
+        if not isinstance(value, bool):
+            raise ValueError("flag must be a boolean value")
+        self._return_as_tensor = value
+
+
         
 
     # Return number of images in the dataset split
     def __len__(self):
         return len(self.image_mask_pairs)
     
+
+    # Returns the image tensor as pre-processed by the given SAM Processor
     def __getitem__(self, idx):
         img_path, mask_path = self.image_mask_pairs[idx]
 
@@ -64,9 +81,15 @@ class ImageMaskDataset(Dataset):
         # image = Image.fromarray(image)
         # mask = Image.fromarray(mask)
 
-        # # Preprocess image using SAM processor
-        # inputs = self.processor(images=image, return_tensors="pt")  # Process the image to tensors
-        # image = inputs["pixel_values"].squeeze(0)  # Remove batch dimension added by default
+        print("image bef: ", image.shape)
+
+        if self.return_as_tensor:
+            # Preprocess image using SAM processor
+            image = self.processor(images=image, return_tensors="pt")  # Process the image to tensors
+            image = image["pixel_values"].squeeze(0)  # Remove batch dimension added by default
+
+
+        print("image aft: ", image.shape)
 
         # # Resize the mask to match the image size
         # resize_transform = transforms.Resize((1024, 1024), interpolation=transforms.InterpolationMode.NEAREST)
@@ -96,39 +119,25 @@ class ImageMaskDataset(Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)  # Load as grayscale
 
-        # Convert numpy arrays to PIL Images
-        image = Image.fromarray(image)
-        mask = Image.fromarray(mask)
-
-        # Apply transformation to the image and mask
-        if self.transform:
-            image = self.transform(image)
-            mask = self.transform(mask)
-
-        # Convert image and mask back to numpy arrays for displaying
-        image = image.permute(1, 2, 0).numpy()  # Convert tensor back to HWC (numpy) format
-        mask = mask.squeeze(0).numpy()  # Squeeze to remove unused channel
 
         # Plot the image and mask
-        plt.figure(figsize=(15, 5))
+        plt.figure(figsize=(15, 6))
         plt.title(os.path.basename(img_path), pad=20, fontsize=12)
         plt.axis("off")  # Remove axis
-
-
 
         # Show image
         plt.subplot(1, 2, 1)
         plt.imshow(image)
         plt.axis('off')
         plt.title("Image", fontsize=10)
-        plt.figtext(0.30, 0.15, f"Image Shape: {image.shape}", ha='center')
+        plt.figtext(0.30, 0.05, f"Image Shape: {image.shape}", ha='center')
 
         # Show mask
         plt.subplot(1, 2, 2)
         plt.imshow(mask, cmap='gray') # viridis also works well
         plt.axis('off')
         plt.title("Mask", fontsize=10)
-        plt.figtext(0.73, 0.15, f"Mask Shape: {mask.shape}", ha='center')
+        plt.figtext(0.73, 0.05, f"Mask Shape: {mask.shape}", ha='center')
 
         plt.show()
 
@@ -161,7 +170,7 @@ class ImageMaskDataset(Dataset):
         axes[1].set_title("Ground Truth Mask")
 
         # Create an empty black image for the SAM mask
-        sam_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)  # Black background
+        sam_mask = np.zeros((image.shape[0], image.shape[1], 3), dtype=np.uint8)  # Black background
 
         # Sort the masks by area (largest first)
         sorted_anns = sorted(compare_masks, key=lambda x: x['area'], reverse=True)
@@ -189,7 +198,7 @@ class ImageMaskDataset(Dataset):
     # Taken directly from SAM's Github repo
     def show_anns(self,idx, anns):
 
-        img_path= self.image_mask_pairs[idx][0]
+        img_path = self.image_mask_pairs[idx][0]
 
         plt.figure(figsize=(10,10))
         plt.imshow(cv2.imread(img_path))
