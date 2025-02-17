@@ -72,31 +72,30 @@ class ImageMaskDataset(Dataset):
     def __getitem__(self, idx):
         img_path, mask_path = self.image_mask_pairs[idx]
 
-        # Load image and mask on-the-fly
-        image = cv2.imread(img_path)
+        # Load image as RGB (3 channels)
+        image = cv2.imread(img_path)  # Loads the image in BGR
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)  # Load as grayscale
 
-        # # Convert numpy arrays to PIL Images for transformations
-        # image = Image.fromarray(image)
-        # mask = Image.fromarray(mask)
+        # Load mask as grayscale
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)  # Load mask as grayscale directly
 
-        print("image bef: ", image.shape)
+        
 
+        # Preprocess image using SAM processor. Return as tensor if required.
         if self.return_as_tensor:
-            # Preprocess image using SAM processor
-            image = self.processor(images=image, return_tensors="pt")  # Process the image to tensors
-            image = image["pixel_values"].squeeze(0)  # Remove batch dimension added by default
+            # Process the RGB image (3 channels)
+            image = self.processor(images=image, return_tensors="pt")  # RGB image (3 channels)
+        else:
+            # Process the RGB image (3 channels) without converting to tensor
+            image = self.processor(images=image)  # RGB image (3 channels)
 
+        # Remove batch dimension added by default
+        image = image["pixel_values"][0]
 
-        print("image aft: ", image.shape)
-
-        # # Resize the mask to match the image size
-        # resize_transform = transforms.Resize((1024, 1024), interpolation=transforms.InterpolationMode.NEAREST)
-        # mask = resize_transform(mask)
-
-        # # Convert mask to tensor (no normalization)
-        # mask = torch.tensor(np.array(mask), dtype=torch.long)  # Ensure mask is long type for segmentation
+        # Reshape the grayscale mask to [1, H, W] for the model
+        mask = cv2.resize(mask, (image.shape[1], image.shape[0]))  # Resize mask to match image size
+        mask = torch.tensor(mask, dtype=torch.long)  # Convert to tensor
+        mask = mask.unsqueeze(0)  # Add a channel dimension [1, H, W]
 
         # Return as a dictionary
         return {
