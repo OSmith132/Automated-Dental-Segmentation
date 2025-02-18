@@ -25,6 +25,7 @@ class ImageMaskDataset(Dataset):
         self.split = split
         
         self._preprocess = False
+        self._return_as_tensor = False
 
 
         # Get the dirs for images and masks
@@ -60,6 +61,19 @@ class ImageMaskDataset(Dataset):
             raise ValueError("flag must be a boolean value")
         self._preprocess = value
 
+    
+    @property
+    def return_as_tensor(self):
+        """Getter for flag"""
+        return self._return_as_tensor
+
+    @preprocess.setter
+    def return_as_tensor(self, value):
+        """Setter for flag"""
+        if not isinstance(value, bool):
+            raise ValueError("flag must be a boolean value")
+        self._return_as_tensor = value
+
 
         
 
@@ -84,15 +98,31 @@ class ImageMaskDataset(Dataset):
         # Preprocess image using SAM processor if requred
         if self._preprocess:
 
-            # Process the RGB image (3 channels)
-            image = self.processor(images=image)  # RGB image (3 channels)
-            # Remove batch dimension added by default
-            image = image["pixel_values"][0]
+            if self._return_as_tensor:
+                mask = torch.tensor(mask, dtype=torch.float32)
 
-            # Reshape the grayscale mask to [1, H, W] for the model
-            mask = cv2.resize(mask, (image.shape[1], image.shape[0]))  # Resize mask to match image size
-            mask = torch.tensor(mask, dtype=torch.long)  # Convert to tensor
-            mask = mask.unsqueeze(0)  # Add a channel dimension [1, H, W]
+                inputs = self.processor(images=image, segmentation_maps=[mask], return_tensors="pt")  # RGB image (3 channels)
+
+                inputs = {k:v.squeeze(0) for k,v in inputs.items()} # Remove batch dimension added by default
+
+                inputs["ground_truth_mask"] = mask
+
+                return inputs
+
+
+            else:
+                image = self.processor(images=image)
+
+                # Reshape the grayscale mask to [1, H, W] for the model
+                mask = cv2.resize(mask, (image.shape[1], image.shape[0]))  # Resize mask to match image size
+                mask = torch.tensor(mask, dtype=torch.long)  # Convert to tensor
+                mask = mask.unsqueeze(0)  # Add a channel dimension [1, H, W]
+
+
+            
+            
+
+            
 
         
 

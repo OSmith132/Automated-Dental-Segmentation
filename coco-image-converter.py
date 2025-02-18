@@ -83,7 +83,7 @@ def create_masks_from_coco(dataset_path, splits):
 
 
 
-            # Save mask
+            # Save mask 
             mask_filename = os.path.splitext(img_info['file_name'])[0] + "-segmentation-mask.png"
             mask_path = os.path.join(mask_dir, mask_filename)
             Image.fromarray(mask).save(mask_path)
@@ -95,7 +95,7 @@ def create_masks_from_coco(dataset_path, splits):
 
 # Root dataset folder
 dataset_path = "Datasets/Dental project.v19i.coco-1"
-splits = ["test"]#, "train", "valid"]
+splits = ["test", "train", "valid"]
 
 # Call function to create masks
 create_masks_from_coco(dataset_path, splits)
