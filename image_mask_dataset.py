@@ -24,7 +24,7 @@ class ImageMaskDataset(Dataset):
         self.dataset_path = dataset_path
         self.split = split
         
-        self._return_as_tensor = False
+        self._preprocess = False
 
 
         # Get the dirs for images and masks
@@ -49,16 +49,16 @@ class ImageMaskDataset(Dataset):
 
 
     @property
-    def return_as_tensor(self):
+    def preprocess(self):
         """Getter for flag"""
-        return self._return_as_tensor
+        return self._preprocess
 
-    @return_as_tensor.setter
-    def return_as_tensor(self, value):
+    @preprocess.setter
+    def preprocess(self, value):
         """Setter for flag"""
         if not isinstance(value, bool):
             raise ValueError("flag must be a boolean value")
-        self._return_as_tensor = value
+        self._preprocess = value
 
 
         
@@ -81,21 +81,22 @@ class ImageMaskDataset(Dataset):
 
         
 
-        # Preprocess image using SAM processor. Return as tensor if required.
-        if self.return_as_tensor:
+        # Preprocess image using SAM processor if requred
+        if self._preprocess:
+
             # Process the RGB image (3 channels)
-            image = self.processor(images=image, return_tensors="pt")  # RGB image (3 channels)
-        else:
-            # Process the RGB image (3 channels) without converting to tensor
             image = self.processor(images=image)  # RGB image (3 channels)
+            # Remove batch dimension added by default
+            image = image["pixel_values"][0]
 
-        # Remove batch dimension added by default
-        image = image["pixel_values"][0]
+            # Reshape the grayscale mask to [1, H, W] for the model
+            mask = cv2.resize(mask, (image.shape[1], image.shape[0]))  # Resize mask to match image size
+            mask = torch.tensor(mask, dtype=torch.long)  # Convert to tensor
+            mask = mask.unsqueeze(0)  # Add a channel dimension [1, H, W]
 
-        # Reshape the grayscale mask to [1, H, W] for the model
-        mask = cv2.resize(mask, (image.shape[1], image.shape[0]))  # Resize mask to match image size
-        mask = torch.tensor(mask, dtype=torch.long)  # Convert to tensor
-        mask = mask.unsqueeze(0)  # Add a channel dimension [1, H, W]
+        
+
+        
 
         # Return as a dictionary
         return {
@@ -153,7 +154,10 @@ class ImageMaskDataset(Dataset):
         # Load image and mask
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+        #image = cv2.resize(image, (1024, 1024))
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)  # Load as grayscale
+
+
 
         # Create figure with 3 subplots
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
@@ -170,6 +174,8 @@ class ImageMaskDataset(Dataset):
 
         # Create an empty black image for the SAM mask
         sam_mask = np.zeros((image.shape[0], image.shape[1], 3), dtype=np.uint8)  # Black background
+
+        
 
         # Sort the masks by area (largest first)
         sorted_anns = sorted(compare_masks, key=lambda x: x['area'], reverse=True)
