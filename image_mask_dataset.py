@@ -75,12 +75,52 @@ class ImageMaskDataset(Dataset):
         self._return_as_tensor = value
 
 
-        
-
     # Return number of images in the dataset split
     def __len__(self):
         return len(self.image_mask_pairs)
     
+
+
+
+
+    def _find_object_masks(self, img_path, mask_dir):
+    
+
+        # Extract filename without extension
+        img_filename = os.path.splitext(os.path.basename(img_path))[0]
+
+        # Find all relevant mask files
+        object_mask_paths = sorted([
+            os.path.join(mask_dir, f) for f in os.listdir(mask_dir)
+            if f.startswith(img_filename) and f.endswith(".png")
+        ])
+
+        if not object_mask_paths:
+            raise FileNotFoundError(f"No masks found for {img_filename} in {mask_dir}")
+
+        # Load masks as binary NumPy arrays
+        object_masks = [cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) for mask_path in object_mask_paths]
+
+        return object_masks
+    
+
+    #Get bounding boxes from mask. (taken from https://github.com/bnsreenu/python_for_microscopists/blob/master/331_fine_tune_SAM_mito.ipynb)
+    def get_bounding_box(self, ground_truth_map):
+        # get bounding box from mask
+        y_indices, x_indices = np.where(ground_truth_map > 0)
+        x_min, x_max = np.min(x_indices), np.max(x_indices)
+        y_min, y_max = np.min(y_indices), np.max(y_indices)
+        # add perturbation to bounding box coordinates
+        H, W = ground_truth_map.shape
+        x_min = max(0, x_min - np.random.randint(0, 20))
+        x_max = min(W, x_max + np.random.randint(0, 20))
+        y_min = max(0, y_min - np.random.randint(0, 20))
+        y_max = min(H, y_max + np.random.randint(0, 20))
+        bbox = [x_min, y_min, x_max, y_max]
+
+        return bbox
+
+
 
     # Returns the image tensor as pre-processed by the given SAM Processor
     def __getitem__(self, idx):
@@ -99,13 +139,19 @@ class ImageMaskDataset(Dataset):
         if self._preprocess:
 
             if self._return_as_tensor:
-                mask = torch.tensor(mask, dtype=torch.float32)
 
-                inputs = self.processor(images=image, segmentation_maps=[mask], return_tensors="pt")  # RGB image (3 channels)
+                # object_masks = self._find_object_masks(img_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks") ) # Get indiviidual biinary mask for each object
+                # mask = torch.tensor(mask, dtype=torch.float32)
+
+                binary_mask = cv2.resize((mask > 0).astype(np.float32), (256,256))  # Convert to binary (0 or 1)
+
+                bounding_boxes = self. _get_bounding_box(binary_mask)
+
+                inputs = self.processor(images=image, input_boxes=[[bounding_boxes]],  return_tensors="pt")  # RGB image (3 channels)           # segmentation_maps=[binary_mask],
 
                 inputs = {k:v.squeeze(0) for k,v in inputs.items()} # Remove batch dimension added by default
 
-                inputs["ground_truth_mask"] = mask
+                inputs["ground_truth_mask"] = binary_mask
 
                 return inputs
 

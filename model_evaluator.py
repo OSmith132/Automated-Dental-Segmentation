@@ -7,13 +7,6 @@ import torch
 
 class ModelEvaluator:
     def __init__(self, model, device="cuda"):
-        """
-        Initialize the evaluator.
-
-        Args:
-            model (torch.nn.Module): Pretrained SAM model.
-            device (str): Device to run evaluation ("cuda" or "cpu").
-        """
         self.model = model.to(device)
         self.predictor = SamPredictor(model)
         self.device = device
@@ -21,16 +14,7 @@ class ModelEvaluator:
         
 
     def evaluate_metrics(masks, gt_masks):
-        """
-        Evaluate the model's performance on the given masks and ground truth masks for each class.
-
-        Args:
-            masks (list of np.ndarray): List of predicted masks.
-            gt_masks (list of np.ndarray): List of ground truth masks.
         
-        Returns:
-            dict: A dictionary containing the metrics for each class (IoU, Precision, Recall, F1 Score, Dice Score, and MCC).
-        """
         num_images = len(masks)
         num_classes = int(np.max([np.max(mask) for mask in gt_masks]) + 1)  # Find the number of classes
         
