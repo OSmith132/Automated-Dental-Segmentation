@@ -1,177 +1,151 @@
-from sklearn.metrics import jaccard_score, precision_score, recall_score, f1_score, matthews_corrcoef
-from torch.utils.data import DataLoader
-from monai.losses import DiceLoss
-from segment_anything import SamPredictor
-import numpy as np
 import torch
+import numpy as np
+from tqdm import tqdm
+from monai.metrics import DiceMetric
+from torchmetrics import JaccardIndex, Precision, Recall, F1Score, MatthewsCorrCoef
+
+
 
 class ModelEvaluator:
-    def __init__(self, model, device="cuda"):
-        self.model = model.to(device)
-        self.predictor = SamPredictor(model)
-        self.device = device
-        self.loss_fn = DiceLoss(sigmoid=True)
-        
+    def __init__(self, model, processor, test_dataset):
+        self.model = model
+        self.processor = processor
+        self.test_dataset = test_dataset
 
-    def evaluate_metrics(masks, gt_masks):
-        
-        num_images = len(masks)
-        num_classes = int(np.max([np.max(mask) for mask in gt_masks]) + 1)  # Find the number of classes
-        
-        # Initialize a dictionary to store metrics for each class
-        class_metrics = {class_id: {
-            "IoU": 0,
-            "Precision": 0,
-            "Recall": 0,
-            "F1 Score": 0,
-            "Dice Score": 0,
-            "MCC": 0
-        } for class_id in range(num_classes)}
-        
-        for mask, gt_mask in zip(masks, gt_masks):
+        # Initialize metrics
+        self.dice_metric = DiceMetric(include_background=True, reduction="mean")
+        self.iou_metric = JaccardIndex(task="binary").to("cuda")
+        self.precision_metric = Precision(task="binary").to("cuda")
+        self.recall_metric = Recall(task="binary").to("cuda")
+        self.f1_metric = F1Score(task="binary").to("cuda")
+        self.mcc_metric = MatthewsCorrCoef(task="binary").to("cuda")
 
-            # Ensure both mask and gt_mask are NumPy arrays
-            if isinstance(mask, torch.Tensor):
-                mask = mask.cpu().numpy()
-            if isinstance(gt_mask, torch.Tensor):
-                gt_mask = gt_mask.cpu().numpy()
-
-            # For multi-class masks, convert to class indices
-            if mask.ndim == 3:  # For multi-channel masks (e.g., RGB or multi-class channels)
-                mask = np.argmax(mask, axis=-1)  # Convert softmax output to class indices
-            gt_mask = np.argmax(gt_mask, axis=-1)  # Ensure ground truth is also a single class per pixel
-
-            # Calculate metrics for each class
-            for class_id in range(num_classes):
-                # Get binary masks for the current class
-                mask_class = (mask == class_id).astype(int)
-                gt_mask_class = (gt_mask == class_id).astype(int)
-                
-                # Calculate IoU
-                intersection = np.sum((mask_class == 1) & (gt_mask_class == 1))
-                union = np.sum((mask_class == 1) | (gt_mask_class == 1))
-                iou = intersection / union if union != 0 else 0
-                class_metrics[class_id]["IoU"] += iou
-
-                # Calculate Precision
-                precision = precision_score(gt_mask_class.flatten(), mask_class.flatten())
-                class_metrics[class_id]["Precision"] += precision
-
-                # Calculate Recall
-                recall = recall_score(gt_mask_class.flatten(), mask_class.flatten())
-                class_metrics[class_id]["Recall"] += recall
-
-                # Calculate F1 Score
-                f1 = f1_score(gt_mask_class.flatten(), mask_class.flatten())
-                class_metrics[class_id]["F1 Score"] += f1
-
-                # Calculate Dice Score
-                intersection = np.sum((mask_class == 1) & (gt_mask_class == 1))
-                dice = 2 * intersection / (np.sum(mask_class) + np.sum(gt_mask_class)) if (np.sum(mask_class) + np.sum(gt_mask_class)) != 0 else 0
-                class_metrics[class_id]["Dice Score"] += dice
-
-                 # Calculate MCC (Matthews Correlation Coefficient)
-                mcc = matthews_corrcoef(gt_mask_class.flatten(), mask_class.flatten())
-                class_metrics[class_id]["MCC"] += mcc
-        
-
-        
+        # Store all metric results
+        self.iou_scores = []
+        self.precision_scores = []
+        self.recall_scores = []
+        self.f1_scores = []
+        self.dice_scores = []
+        self.mcc_scores = []
 
 
+    # Clear all metrics
+    def _clear_metrics(self):
+        self.iou_scores.clear
+        self.precision_scores.clear
+        self.recall_scores.clear
+        self.f1_scores.clear
+        self.dice_scores.clear
+        self.mcc_scores.clear
 
 
+    # Evaluate SAM and SAM based models
+    def evaluate_sam_model(self):
+
+        # Clear prev metrics
+        self._clear_metrics()
+
+        # Set model to evaluation mode so it stops traininig
+        self.model.eval()
+
+        # Iterate over test dataset
+        for idx in tqdm(range(len(self.test_dataset))):
+
+            # Get image and gt mask
+            test_image = self.test_dataset[idx]["pixel_values"]
+            ground_truth_mask = np.array(self.test_dataset[idx]["ground_truth_mask"])
+
+            # Get bounding box for input
+            prompt = self.test_dataset.get_bounding_box(ground_truth_mask)
+
+            # Prepare image & box prompt
+            inputs = self.processor(test_image, input_boxes=[[prompt]], return_tensors="pt")
+            inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+            # Forward pass
+            with torch.no_grad():
+                outputs = self.model(**inputs, multimask_output=False)
+
+            # Apply sigmoid to get probability mask
+            medsam_seg_prob = torch.sigmoid(outputs.pred_masks.squeeze(1)).cpu().numpy().squeeze()
+
+            # Convert to binary mask
+            medsam_seg = (medsam_seg_prob > 0.5).astype(np.uint8)
+            ground_truth_mask = (ground_truth_mask > 0).astype(np.uint8)  # Ensure binary GT mask
+
+            # Convert to tensors for MONAI & torch
+            medsam_seg_tensor = torch.tensor(medsam_seg, dtype=torch.float32).unsqueeze(0).to("cuda")
+            ground_truth_mask_tensor = torch.tensor(ground_truth_mask, dtype=torch.float32).unsqueeze(0).to("cuda")
+
+            # Compute metrics
+            self.dice_scores.append(self.dice_metric(medsam_seg_tensor.unsqueeze(0), ground_truth_mask_tensor.unsqueeze(0)).item())
+            self.iou_scores.append(self.iou_metric(medsam_seg_tensor, ground_truth_mask_tensor).item())
+            self.precision_scores.append(self.precision_metric(medsam_seg_tensor, ground_truth_mask_tensor).item())
+            self.recall_scores.append(self.recall_metric(medsam_seg_tensor, ground_truth_mask_tensor).item())
+            self.f1_scores.append(self.f1_metric(medsam_seg_tensor, ground_truth_mask_tensor).item())
+            self.mcc_scores.append(self.mcc_metric(medsam_seg_tensor, ground_truth_mask_tensor).item())
+
+        return self.compute_average_metrics()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-    def evaluate_metrics_binary(masks, gt_masks):
-        """
-        Evaluate the model's performance on the given masks and ground truth masks.
-
-        Args:
-            masks (list of np.ndarray): List of predicted masks.
-            gt_masks (list of np.ndarray): List of ground truth masks.
-        
-        Returns:
-            dict: A dictionary containing the average metrics for IoU, Precision, Recall, F1 Score, Dice Score, and MCC.
-        """
-        num_images = len(masks)
-        metrics = {
-            "IoU": 0,
-            "Precision": 0,
-            "Recall": 0,
-            "F1 Score": 0,
-            "Dice Score": 0,
-            "MCC": 0
+    # Average and returnn all 
+    def compute_average_metrics(self):
+        avg_metrics = {
+            "IoU":        np.mean(self.iou_scores),
+            "Precision":  np.mean(self.precision_scores),
+            "Recall":     np.mean(self.recall_scores),
+            "F1 Score":   np.mean(self.f1_scores),
+            "Dice Score": np.mean(self.dice_scores),
+            "MCC":        np.mean(self.mcc_scores),
         }
+
+        return avg_metrics
+
+
+    # Output stored results
+    def print_results(self):
+        avg_metrics = self.compute_average_metrics()
+        for metric, value in avg_metrics.items():
+            print(f"{metric}: {value:.4f}")
+
+
+
+    # SAM mask generator evaluation
+    def evaluate_mask_generator(self):
+        self.iou_scores.clear()
+        self.precision_scores.clear()
+        self.recall_scores.clear()
+        self.f1_scores.clear()
+        self.dice_scores.clear()
+        self.mcc_scores.clear()
         
-        for mask, gt_mask in zip(masks, gt_masks):
+        for idx in tqdm(range(len(self.test_dataset))):
+            test_image = self.test_dataset[idx]["pixel_values"]
+            ground_truth_mask = np.array(self.test_dataset[idx]["ground_truth_mask"])
 
-            # Ensure both mask and gt_mask are NumPy arrays
-            if isinstance(mask, torch.Tensor):
-                mask = mask.cpu().numpy()
-            if isinstance(gt_mask, torch.Tensor):
-                gt_mask = gt_mask.cpu().numpy()
-
-            if mask.ndim == 3:  # For multi-channel masks (e.g., RGB or multi-class channels)
-                mask = np.argmax(mask, axis=-1)  # Convert softmax output to class indices
-            gt_mask = np.argmax(gt_mask, axis=-1)  # Ensure ground truth is also a single class per pixel
-
+            # Generate masks using the automatic mask generator
+            generated_masks = self.model.generate(test_image)
             
+            # Convert generated masks into a single binary mask
+            generated_mask = np.zeros_like(ground_truth_mask, dtype=np.uint8)
+            for mask in generated_masks:
+                generated_mask = np.logical_or(generated_mask, mask["segmentation"]).astype(np.uint8)
 
-            # Calculate IoU
-            intersection = np.sum((mask == 1) & (gt_mask == 1))
-            union = np.sum((mask == 1) | (gt_mask == 1))
-            iou = intersection / union if union != 0 else 0
-            metrics["IoU"] += iou
-
-            # Calculate Precision
-            precision = precision_score(gt_mask.flatten(), mask.flatten())
-            metrics["Precision"] += precision
-
-            # Calculate Recall
-            recall = recall_score(gt_mask.flatten(), mask.flatten())
-            metrics["Recall"] += recall
-
-            # Calculate F1 Score
-            f1 = f1_score(gt_mask.flatten(), mask.flatten())
-            metrics["F1 Score"] += f1
-
-            # Calculate MCC (Matthews Correlation Coefficient)
-            mcc = matthews_corrcoef(gt_mask.flatten(), mask.flatten())
-            metrics["MCC"] += mcc
-
-            # Calculate Dice Score
-            intersection = np.sum((mask == 1) & (gt_mask == 1))
-            dice = 2 * intersection / (np.sum(mask) + np.sum(gt_mask)) if (np.sum(mask) + np.sum(gt_mask)) != 0 else 0
-            metrics["Dice Score"] += dice
-
-        # Calculate the average for each metric
-        for key in metrics:
-            metrics[key] /= num_images
-
-        return metrics
-
-
-
+            # Ensure binary format for ground truth
+            ground_truth_mask = (ground_truth_mask > 0).astype(np.uint8)
+            
+            # Convert to tensors for MONAI & TorchMetrics
+            generated_mask_tensor = torch.tensor(generated_mask, dtype=torch.float32).unsqueeze(0).to("cuda")
+            ground_truth_mask_tensor = torch.tensor(ground_truth_mask, dtype=torch.float32).unsqueeze(0).to("cuda")
+            
+            # Compute metrics
+            self.dice_scores.append(self.dice_metric(generated_mask_tensor.unsqueeze(0), ground_truth_mask_tensor.unsqueeze(0)).item())
+            self.iou_scores.append(self.iou_metric(generated_mask_tensor, ground_truth_mask_tensor).item())
+            self.precision_scores.append(self.precision_metric(generated_mask_tensor, ground_truth_mask_tensor).item())
+            self.recall_scores.append(self.recall_metric(generated_mask_tensor, ground_truth_mask_tensor).item())
+            self.f1_scores.append(self.f1_metric(generated_mask_tensor, ground_truth_mask_tensor).item())
+            self.mcc_scores.append(self.mcc_metric(generated_mask_tensor, ground_truth_mask_tensor).item())
+            
+        return self.compute_average_metrics()
 
 
