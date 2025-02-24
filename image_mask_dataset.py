@@ -124,6 +124,20 @@ class ImageMaskDataset(Dataset):
         bbox = [x_min, y_min, x_max, y_max]
 
         return bbox
+    
+
+    def get_object_bounding_boxes(self, idx):
+        
+        img_path, mask_path = self.image_mask_pairs[idx]
+
+        object_masks = self._find_object_masks(img_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks") ) # Get indiviidual biinary mask for each object
+
+        bboxes = []
+
+        for obj in object_masks:
+            bboxes.append(self.get_bounding_box(obj))
+
+        return bboxes
 
 
 
