@@ -103,19 +103,19 @@ class ImageMaskDataset(Dataset):
     
 
     # Returns a seperate mask for each object. Masks created by individual_mask_generator.py
-    def _find_object_masks(self, img_path, mask_dir):
+    def _find_object_masks(self, image_path, mask_dir):
 
         # Extract filename without extension
-        img_filename = os.path.splitext(os.path.basename(img_path))[0]
+        image_filename = os.path.splitext(os.path.basename(image_path))[0]
 
         # Find all relevant mask files
         object_mask_paths = sorted([
             os.path.join(mask_dir, f) for f in os.listdir(mask_dir)
-            if f.startswith(img_filename) and f.endswith(".png")
+            if f.startswith(image_filename) and f.endswith(".png")
         ])
 
         if not object_mask_paths:
-            raise FileNotFoundError(f"No masks found for {img_filename} in {mask_dir}")
+            raise FileNotFoundError(f"No masks found for {image_filename} in {mask_dir}")
 
         # Load masks as binary NumPy arrays
         object_masks = [cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) for mask_path in object_mask_paths]
@@ -147,9 +147,9 @@ class ImageMaskDataset(Dataset):
     # Returns an array of all bounding boxes for each object
     def get_object_bounding_boxes(self, idx):
         
-        img_path, mask_path = self.image_mask_pairs[idx]
+        image_path, mask_path = self.image_mask_pairs[idx]
 
-        object_masks = self._find_object_masks(img_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks") ) # Get individual biinary mask for each object
+        object_masks = self._find_object_masks(image_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks") ) # Get individual biinary mask for each object
 
         bboxes = []
 
@@ -163,25 +163,28 @@ class ImageMaskDataset(Dataset):
 
     # Returns the image tensor as pre-processed by the given SAM Processor
     def __getitem__(self, idx):
-        img_path, mask_path = self.image_mask_pairs[idx]
+
+        # Get image and mask paths
+        image_path, mask_path = self.image_mask_pairs[idx]
 
         # Load image as RGB (3 channels)
-        image = cv2.imread(img_path)  # Loads the image in BGR
+        image = cv2.imread(image_path)  # Loads the image in BGR
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
 
         # Load mask as grayscale
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)  # Load mask as grayscale directly
         
 
+
         # Resize mask to 256x256 if required
         if self._resize_mask:
             mask = cv2.resize(mask, (256,256))
-        
+
 
         # Preprocess and return tensors for use in fine-tuning SAM
         if self._return_as_sam:
 
-            # object_masks = self._find_object_masks(img_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks") ) # Get indiviidual biinary mask for each object
+            # object_masks = self._find_object_masks(image_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks") ) # Get indiviidual binary mask for each object
             # mask = torch.tensor(mask, dtype=torch.float32)
 
             binary_mask = (mask > 0).astype(np.float32)  # Convert to binary (0 or 1)
@@ -195,18 +198,6 @@ class ImageMaskDataset(Dataset):
             inputs["ground_truth_mask"] = binary_mask
 
             return inputs
-        
-
-
-        # # Resize image to 1024x1024 using bicubic interpolation
-        # img_1024 = cv2.resize(img_3c, (1024, 1024), interpolation=cv2.INTER_CUBIC)
-
-        # # Normalize image to [0, 1] range
-        # img_1024 = img_1024.astype(np.float32) / 255.0
-
-        # 
-
-        
 
 
         # Preprocess and return tensors for use in fine-tuning MedSAM
@@ -222,10 +213,10 @@ class ImageMaskDataset(Dataset):
             image_tensor = torch.tensor(image_resized).float().permute(2, 0, 1).unsqueeze(0).to("cuda")
 
             # Get object masks using _find_object_masks (each mask for each object)
-            object_masks = self._find_object_masks(img_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks"))
+            object_masks = self._find_object_masks(image_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks"))
 
             # Convert each object mask to binary
-            binary_object_masks = [((obj_mask > 0).astype(np.float32)) for obj_mask in object_masks]
+            object_masks = [((obj_mask > 0).astype(np.float32)) for obj_mask in object_masks]
 
             # Get bounding boxes (scaled to 1024x1024)
             bounding_boxes = self.get_object_bounding_boxes(idx)
@@ -244,7 +235,7 @@ class ImageMaskDataset(Dataset):
             return {
                 "pixel_values": image_tensor,  # (3, 1024, 1024)
                 "input_boxes": box_1024,  # List of bounding boxes
-                "ground_truth_masks": [torch.tensor(obj_mask, dtype=torch.float32) for obj_mask in binary_object_masks],  # List of object masks
+                "ground_truth_masks": [torch.tensor(obj_mask, dtype=torch.float32) for obj_mask in object_masks],  # List of object masks
                 "bounding_boxes": bounding_boxes
             }
 
@@ -265,16 +256,16 @@ class ImageMaskDataset(Dataset):
         
 
         # Get image and mask path
-        img_path, mask_path = self.image_mask_pairs[idx]
+        image_path, mask_path = self.image_mask_pairs[idx]
 
         # Load image and mask
-        image = cv2.imread(img_path)
+        image = cv2.imread(image_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)  # Load as grayscale
 
         # Plot the image and mask
         plt.figure(figsize=(15, 6))
-        plt.title(os.path.basename(img_path), pad=20, fontsize=12)
+        plt.title(os.path.basename(image_path), pad=20, fontsize=12)
         plt.axis("off")  # Remove axis
 
         # Show image
@@ -298,10 +289,10 @@ class ImageMaskDataset(Dataset):
     def compare_image_masks(self, idx, compare_masks):
  
         # Get image and mask path
-        img_path, mask_path = self.image_mask_pairs[idx]
+        image_path, mask_path = self.image_mask_pairs[idx]
 
         # Load image and mask
-        image = cv2.imread(img_path)
+        image = cv2.imread(image_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
         #image = cv2.resize(image, (1024, 1024))
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)  # Load as grayscale
@@ -347,10 +338,10 @@ class ImageMaskDataset(Dataset):
             return
 
         # Get image
-        img_path = self.image_mask_pairs[idx][0]
+        image_path = self.image_mask_pairs[idx][0]
 
         plt.figure(figsize=(10,10))
-        plt.imshow(cv2.imread(img_path))
+        plt.imshow(cv2.imread(image_path))
 
         # Display largest areas first
         sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
@@ -358,17 +349,17 @@ class ImageMaskDataset(Dataset):
         ax.set_autoscale_on(False)
 
         # Create empty image
-        img = np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1], 4))
-        img[:,:,3] = 0
+        image = np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1], 4))
+        image[:,:,3] = 0
 
         # Add all segments from largest to smallest
         for ann in sorted_anns:
             m = ann['segmentation']
             color_mask = np.concatenate([np.random.random(3), [0.35]])
-            img[m] = color_mask
+            image[m] = color_mask
 
         # Output
-        ax.imshow(img)
+        ax.imshow(image)
         plt.axis('off')
         plt.show() 
 

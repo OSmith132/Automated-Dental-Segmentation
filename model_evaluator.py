@@ -3,14 +3,14 @@ import numpy as np
 from tqdm import tqdm
 from monai.metrics import DiceMetric
 from torchmetrics import JaccardIndex, Precision, Recall, F1Score, MatthewsCorrCoef
-
+import torch.nn.functional as F
 
 
 class ModelEvaluator:
-    def __init__(self, model, processor, test_dataset):
+    def __init__(self, model, processor, dataset):
         self.model = model
         self.processor = processor
-        self.test_dataset = test_dataset
+        self.dataset = dataset
 
         # Initialize metrics
         self.dice_metric = DiceMetric(include_background=True, reduction="mean")
@@ -42,6 +42,8 @@ class ModelEvaluator:
     # Evaluate SAM and SAM based models
     def evaluate_sam_model(self):
 
+        self.dataset.return_as_sam = True
+
         # Clear prev metrics
         self._clear_metrics()
 
@@ -49,14 +51,14 @@ class ModelEvaluator:
         self.model.eval()
 
         # Iterate over test dataset
-        for idx in tqdm(range(len(self.test_dataset))):
+        for idx in tqdm(range(len(self.dataset))):
 
             # Get image and gt mask
-            test_image = self.test_dataset[idx]["pixel_values"]
-            ground_truth_mask = np.array(self.test_dataset[idx]["ground_truth_mask"])
+            test_image = self.dataset[idx]["pixel_values"]
+            ground_truth_mask = np.array(self.dataset[idx]["ground_truth_mask"])
 
             # Get bounding box for input
-            prompt = self.test_dataset.get_bounding_box(ground_truth_mask)
+            prompt = self.dataset.get_bounding_box(ground_truth_mask)
 
             # Prepare image & box prompt
             inputs = self.processor(test_image, input_boxes=[[prompt]], return_tensors="pt")
@@ -88,7 +90,7 @@ class ModelEvaluator:
         return self.compute_average_metrics()
 
 
-    # Average and returnn all 
+    # Average and return all 
     def compute_average_metrics(self):
         avg_metrics = {
             "IoU":        np.mean(self.iou_scores),
@@ -109,9 +111,11 @@ class ModelEvaluator:
             print(f"{metric}: {value:.4f}")
 
 
-
     # SAM mask generator evaluation
     def evaluate_mask_generator(self):
+
+        self.dataset.return_as_sam = True
+
         self.iou_scores.clear()
         self.precision_scores.clear()
         self.recall_scores.clear()
@@ -119,9 +123,9 @@ class ModelEvaluator:
         self.dice_scores.clear()
         self.mcc_scores.clear()
         
-        for idx in tqdm(range(len(self.test_dataset))):
-            test_image = self.test_dataset[idx]["pixel_values"]
-            ground_truth_mask = np.array(self.test_dataset[idx]["ground_truth_mask"])
+        for idx in tqdm(range(len(self.dataset))):
+            test_image = self.dataset[idx]["pixel_values"]
+            ground_truth_mask = np.array(self.dataset[idx]["ground_truth_mask"])
 
             # Generate masks using the automatic mask generator
             generated_masks = self.model.generate(test_image)
@@ -149,3 +153,101 @@ class ModelEvaluator:
         return self.compute_average_metrics()
 
 
+
+
+
+
+    @torch.no_grad()
+    def medsam_inference(self, img_embed, bboxes, H, W):
+        """Perform inference using MedSAM model to generate segmentation masks."""
+        box_torch = torch.as_tensor(bboxes, dtype=torch.float, device=img_embed.device)
+        if len(box_torch.shape) == 2:
+            box_torch = box_torch[:, None, :]  # (B, 1, 4)
+
+        sparse_embeddings, dense_embeddings = self.model.prompt_encoder(
+            points=None,
+            boxes=box_torch,
+            masks=None,
+        )
+        low_res_logits, _ = self.model.mask_decoder(
+            image_embeddings=img_embed,  # (B, 256, 64, 64)
+            image_pe=self.model.prompt_encoder.get_dense_pe(),  # (1, 256, 64, 64)
+            sparse_prompt_embeddings=sparse_embeddings,  # (B, 2, 256)
+            dense_prompt_embeddings=dense_embeddings,  # (B, 256, 64, 64)
+            multimask_output=False,
+        )
+
+        low_res_pred = torch.sigmoid(low_res_logits)  # (1, 1, 256, 256)
+
+        low_res_pred = F.interpolate(
+            low_res_pred,
+            size=(H, W),
+            mode="bilinear",
+            align_corners=False,
+        )  # (1, 1, gt.shape)
+        low_res_pred = low_res_pred.squeeze().cpu().numpy()  # (256, 256)
+        medsam_seg = (low_res_pred > 0.5).astype(np.uint8)
+        return medsam_seg
+    
+
+
+
+
+    def evaluate_medsam_model(self):
+        """Evaluates MedSAM model on the test dataset."""
+
+        # Ensure dataset returns data in MedSAM format
+        self.dataset.return_as_medsam = True  
+
+        self._clear_metrics()
+        self.model.eval()  # Set model to evaluation mode
+
+        for idx in tqdm(range(len(self.dataset)), desc="Evaluating MedSAM"):
+            
+            # Get correct preprocessing
+            self.dataset.return_as_medsam = True
+
+            # Get tensors
+            img_np, box_np, gt_masks, bounding_boxes = self.dataset[idx].values()
+
+            # Get original image
+            self.dataset.return_as_medsam = False
+            img_original = self.dataset[idx]["pixel_values"]
+            W, H, _ = img_original.shape
+
+            # image embedding
+            with torch.no_grad():
+                image_embedding = self.model.image_encoder(img_np)
+
+            # Run inference for all boxes in a batch
+            with torch.no_grad():
+                seg_masks = self.medsam_inference(image_embedding, box_np, H, W)  # List of 5 masks
+
+
+            # If only one mask then wrap in array
+            if len(seg_masks.shape) == 2:
+                seg_masks = [seg_masks]
+
+
+
+            # ground_truth_mask_tensor = gt_masks
+
+
+            for (seg_mask, ground_truth_mask_tensor) in zip(seg_masks, gt_masks):
+                medsam_seg_tensor = torch.tensor(seg_mask, dtype=torch.float32).unsqueeze(0).to("cuda")
+                ground_truth_mask_tensor = torch.tensor(ground_truth_mask_tensor, dtype=torch.float32).unsqueeze(0).to("cuda")
+
+
+                # Compute metrics
+                self.dice_scores.append(self.dice_metric(medsam_seg_tensor.unsqueeze(0), ground_truth_mask_tensor.unsqueeze(0)).to("cpu"))
+                self.iou_scores.append(self.iou_metric(medsam_seg_tensor, ground_truth_mask_tensor).to("cpu"))
+                self.precision_scores.append(self.precision_metric(medsam_seg_tensor, ground_truth_mask_tensor).to("cpu"))
+                self.recall_scores.append(self.recall_metric(medsam_seg_tensor, ground_truth_mask_tensor).to("cpu"))
+                self.f1_scores.append(self.f1_metric(medsam_seg_tensor, ground_truth_mask_tensor).to("cpu"))
+                self.mcc_scores.append(self.mcc_metric(medsam_seg_tensor, ground_truth_mask_tensor).to("cpu"))
+
+               # print(self.dice_metric(medsam_seg_tensor.unsqueeze(0), ground_truth_mask_tensor.unsqueeze(0)).to("cpu"))
+
+
+
+        return self.compute_average_metrics()

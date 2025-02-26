@@ -70,12 +70,13 @@ def extract_individual_masks_from_coco(dataset_path, splits):
                 if 'segmentation' in annotation and isinstance(annotation['segmentation'], list):
                     for polygon in annotation['segmentation']:
                         pts = np.array(polygon, dtype=np.int32).reshape((-1, 2))
-                        cv2.fillPoly(obj_mask, [pts], color=1)  # Fill the polygon with class_id
+                        cv2.fillPoly(obj_mask, [pts], color=255)  # Fill the polygon with class_id or 1
 
                 # Save mask with unique name
-                mask_filename = f"{os.path.splitext(img_info['file_name'])[0]}_obj{obj_idx}.png" # _class{class_id}
-                mask_path = os.path.join(mask_dir, mask_filename)
-                Image.fromarray(obj_mask).save(mask_path)
+                if obj_mask.max() > 0:  # Check if there is any non-zero value
+                    mask_filename = f"{os.path.splitext(img_info['file_name'])[0]}_obj{obj_idx}.png" # _class{class_id}
+                    mask_path = os.path.join(mask_dir, mask_filename)
+                    Image.fromarray(obj_mask).save(mask_path)
 
         print(f"{split} individual object masks saved in {mask_dir}")
 
