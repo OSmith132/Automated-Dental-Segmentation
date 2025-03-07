@@ -23,8 +23,9 @@ class ImageMaskDataset(Dataset):
         self.split             = split
         
         self._return_as_sam    = False # Preprocess image and mask before returng for use in fine-tuning SAM
-        self._return_as_medsam = False # Preprocess image and mas before returning for use in fine-tuning MedSAM
+        self._return_as_medsam = False # Preprocess image and mas before returning for use in MedSAM Inference
         self._resize_mask      = False # Resize the mask to 256x256 for comparison with output from SAM inference
+        self._return_individual_objects = False # Returns all object bboxes individually along with the image.
 
         # Get the dirs for images and masks
         self.split_dir = os.path.join(dataset_path, split)
@@ -89,6 +90,18 @@ class ImageMaskDataset(Dataset):
 
 
 
+    @property
+    def return_individual_objects(self):
+        return self._return_individual_objects
+
+    @return_individual_objects.setter
+    def return_individual_objects(self, value):
+        if not isinstance(value, bool):
+            raise ValueError("variable must be a boolean value")
+        self._return_individual_objects = value
+
+
+
 
 
     #########################
@@ -118,7 +131,12 @@ class ImageMaskDataset(Dataset):
             raise FileNotFoundError(f"No masks found for {image_filename} in {mask_dir}")
 
         # Load masks as binary NumPy arrays
-        object_masks = [cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) for mask_path in object_mask_paths]
+        if self._resize_mask:
+            object_masks = [
+                cv2.resize(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE), (256, 256)) for mask_path in object_mask_paths
+            ]
+        else:
+            object_masks = [cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) for mask_path in object_mask_paths]
 
         return object_masks
     
@@ -156,6 +174,10 @@ class ImageMaskDataset(Dataset):
         for obj in object_masks:
             bboxes.append(self.get_bounding_box(obj))
 
+
+        while len(bboxes) < 20:   # MIN NUMBE OF BBOXES !!!!!
+             bboxes.append([0,0,0,0])
+
         return bboxes
 
 
@@ -189,15 +211,112 @@ class ImageMaskDataset(Dataset):
 
             binary_mask = (mask > 0).astype(np.float32)  # Convert to binary (0 or 1)
 
-            bounding_boxes = self.get_bounding_box(binary_mask)
 
+
+
+
+
+
+
+        
+
+            bounding_boxes = None 
+
+
+            if self._return_individual_objects:
+
+                # Get object masks using _find_object_masks (each mask for each object)
+                object_masks = self._find_object_masks(image_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks"))
+
+                # Convert each object mask to binary
+                object_masks = [((obj_mask > 0).astype(np.float32)) for obj_mask in object_masks]
+
+                # Get bounding boxes (scaled to 1024x1024)
+                bounding_boxes = self.get_object_bounding_boxes(idx)
+                bounding_boxes = torch.tensor(bounding_boxes, dtype=torch.float32)
+
+                H, W, _ = image.shape
+                
+                # Convert to PyTorch tensor and reshape (B, 1, 4)
+                box_1024 = torch.tensor(bounding_boxes, dtype=torch.float32, device="cpu")  # (5, 4)
+                box_1024 = (box_1024 / torch.tensor([W, H, W, H], device="cpu")) * 1024  # Scale to 1024x1024
+                box_1024 = box_1024[:, None, :]  # (5, 1, 4)
+
+                bounding_boxes = [box_1024]
+
+
+            else:
+                bounding_boxes = self.get_bounding_box(binary_mask)
+                
+
+
+
+            # Process the images and bboxes
             inputs = self.processor(images=image, input_boxes=[[bounding_boxes]],  return_tensors="pt")  # RGB image (3 channels)           # segmentation_maps=[binary_mask],
 
             inputs = {k:v.squeeze(0) for k,v in inputs.items()} # Remove batch dimension added by default
 
-            inputs["ground_truth_mask"] = binary_mask
+
+
+
+
+
+
+
+
+            # Return individual masks if needed
+            if self._return_individual_objects:
+
+              
+
+                print(len(object_masks), box_1024.shape[0])
+            
+
+
+                # Ensure masks match bounding boxes
+                if len(object_masks) < box_1024.shape[0]:
+
+                    
+                    # Pad with empty masks (zeros)
+                    H, W = object_masks[0].shape[-2:]  # Get height and width
+                    empty_mask = torch.zeros(H, W, dtype=torch.float32)  # Empty mask
+
+
+                    while len(object_masks) < box_1024.shape[0]:
+                        object_masks.append(empty_mask)
+
+
+
+
+                # Convert object masks to tensors
+                object_masks = [torch.tensor(obj_mask, dtype=torch.float32) for obj_mask in object_masks]
+
+                # Stack into a single tensor (num_bboxes, H, W)
+                inputs["ground_truth_mask"] = torch.stack(object_masks)
+
+
+
+
+            else:
+                inputs["ground_truth_mask"] = binary_mask
+
+
+
+
+            # Print bounding box sizes
+       
+            print(f"Bounding Boxes Shape: {bounding_boxes[0].shape}")  # Expected: (N, 1, 4)
+
+            # Print ground truth mask size
+  
+            print(f"Ground Truth Mask Shape: {inputs['ground_truth_mask'].shape}")  # Expected: (N, H, W)
+
+
 
             return inputs
+
+
+
 
 
         # Preprocess and return tensors for use in fine-tuning MedSAM
@@ -248,6 +367,27 @@ class ImageMaskDataset(Dataset):
             "pixel_values": image,
             "ground_truth_mask": mask
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     # Display the image and ground truth mask
