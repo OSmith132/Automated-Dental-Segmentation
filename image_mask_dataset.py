@@ -130,8 +130,10 @@ class ImageMaskDataset(Dataset):
         if not object_mask_paths:
             raise FileNotFoundError(f"No masks found for {image_filename} in {mask_dir}")
 
+        # Resize the masks to fit the output of the sam model. This will be used to calculate the loss function, but also resizes the masks so be careful (~4.5 hour wasted)
         # Load masks as binary NumPy arrays
         if self._resize_mask:
+            #object_masks = [cv2.threshold(cv2.resize(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE), (256, 256)), 127, 255, cv2.THRESH_BINARY)[1]for mask_path in object_mask_paths]
             object_masks = [
                 cv2.resize(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE), (256, 256)) for mask_path in object_mask_paths
             ]
@@ -175,7 +177,7 @@ class ImageMaskDataset(Dataset):
             bboxes.append(self.get_bounding_box(obj))
 
 
-        while len(bboxes) < 20:   # MIN NUMBE OF BBOXES !!!!!
+        while len(bboxes) < 25:   # MIN NUMBE OF BBOXES !!!!!
              bboxes.append([0,0,0,0])
 
         return bboxes
@@ -235,14 +237,64 @@ class ImageMaskDataset(Dataset):
                 bounding_boxes = self.get_object_bounding_boxes(idx)
                 bounding_boxes = torch.tensor(bounding_boxes, dtype=torch.float32)
 
-                H, W, _ = image.shape
+                
+                
+
+                
+
+
+
+
+
                 
                 # Convert to PyTorch tensor and reshape (B, 1, 4)
+
+                #print("bef", bounding_boxes, image.shape)
                 box_1024 = torch.tensor(bounding_boxes, dtype=torch.float32, device="cpu")  # (5, 4)
-                box_1024 = (box_1024 / torch.tensor([W, H, W, H], device="cpu")) * 1024  # Scale to 1024x1024
+
+
+
+                if self._resize_mask:
+                    box_1024 = (box_1024 / torch.tensor([256,256,256,256], device="cpu")) * 640 # Scale to 640
+
+
                 box_1024 = box_1024[:, None, :]  # (5, 1, 4)
+               # print(box_1024)
 
                 bounding_boxes = [box_1024]
+
+
+                from matplotlib import patches
+
+
+
+
+
+                # fig, ax = plt.subplots(figsize=(8, 8))
+                # ax.imshow(image)  # Show the image
+
+                # # Plot predicted boxes
+                # for box in bounding_boxes:
+                #     rect = patches.Rectangle(
+                #         (box[0], box[1]),  # x, y (top-left corner)
+                #         box[2] - box[0],  # width
+                #         box[3] - box[1],  # height
+                #         linewidth=2,
+                #         edgecolor='blue',
+                #         facecolor='none',
+                #         label='Predicted Box'
+                #     )
+                #     ax.add_patch(rect)
+
+                # plt.show()
+
+
+
+
+
+
+
+
 
 
             else:
@@ -261,6 +313,36 @@ class ImageMaskDataset(Dataset):
 
 
 
+         
+            print(bounding_boxes, "\n\n", inputs['input_boxes'])
+
+            
+            from matplotlib import patches
+
+
+            fig, ax = plt.subplots(figsize=(8, 8))
+            ax.imshow(inputs['pixel_values'].permute(1,2,0))  # Show the image
+
+            # Plot predicted boxes
+            for box in inputs['input_boxes']:
+                rect = patches.Rectangle(
+                    (box[0], box[1]),  # x, y (top-left corner)
+                    box[2] - box[0],  # width
+                    box[3] - box[1],  # height
+                    linewidth=2,
+                    edgecolor='blue',
+                    facecolor='none',
+                    label='Predicted Box'
+                )
+                ax.add_patch(rect)
+
+            plt.show()
+
+
+
+
+
+
 
 
 
@@ -269,7 +351,7 @@ class ImageMaskDataset(Dataset):
 
               
 
-                print(len(object_masks), box_1024.shape[0])
+                # print(len(object_masks), box_1024.shape[0])
             
 
 
@@ -295,23 +377,17 @@ class ImageMaskDataset(Dataset):
                 inputs["ground_truth_mask"] = torch.stack(object_masks)
 
 
-
-
             else:
                 inputs["ground_truth_mask"] = binary_mask
 
 
-
-
-            # Print bounding box sizes
+            # # Print bounding box sizes
        
-            print(f"Bounding Boxes Shape: {bounding_boxes[0].shape}")  # Expected: (N, 1, 4)
+            # print(f"Bounding Boxes Shape: {bounding_boxes[0].shape}")  # Expected: (N, 1, 4)
 
-            # Print ground truth mask size
+            # # Print ground truth mask size
   
-            print(f"Ground Truth Mask Shape: {inputs['ground_truth_mask'].shape}")  # Expected: (N, H, W)
-
-
+            # print(f"Ground Truth Mask Shape: {inputs['ground_truth_mask'].shape}")  # Expected: (N, H, W)
 
             return inputs
 
