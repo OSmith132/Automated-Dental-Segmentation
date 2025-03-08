@@ -24,8 +24,10 @@ class ImageMaskDataset(Dataset):
         
         self._return_as_sam    = False # Preprocess image and mask before returng for use in fine-tuning SAM
         self._return_as_medsam = False # Preprocess image and mas before returning for use in MedSAM Inference
-        self._resize_mask      = False # Resize the mask to 256x256 for comparison with output from SAM inference
+        self._resize_mask      = False # Resize the mask to 256x256 for comparison with output from SAM inference. This also resizes the bounding boxes returned from 
         self._return_individual_objects = False # Returns all object bboxes individually along with the image.
+
+        self._min_bounding_boxes = 25 # This needs to be changed depending on the max number of objects from all the images in the dataset
 
         # Get the dirs for images and masks
         self.split_dir = os.path.join(dataset_path, split)
@@ -177,7 +179,7 @@ class ImageMaskDataset(Dataset):
             bboxes.append(self.get_bounding_box(obj))
 
 
-        while len(bboxes) < 25:   # MIN NUMBE OF BBOXES !!!!!
+        while len(bboxes) < self._min_bounding_boxes:   # MIN NUMBE OF BBOXES !!!!!
              bboxes.append([0,0,0,0])
 
         return bboxes
@@ -215,13 +217,6 @@ class ImageMaskDataset(Dataset):
 
 
 
-
-
-
-
-
-        
-
             bounding_boxes = None 
 
 
@@ -238,69 +233,22 @@ class ImageMaskDataset(Dataset):
                 bounding_boxes = torch.tensor(bounding_boxes, dtype=torch.float32)
 
                 
-                
-
-                
-
-
-
-
-
-                
                 # Convert to PyTorch tensor and reshape (B, 1, 4)
-
-                #print("bef", bounding_boxes, image.shape)
                 box_1024 = torch.tensor(bounding_boxes, dtype=torch.float32, device="cpu")  # (5, 4)
 
 
-
+                # Only resize t0 640 if needed as resize to 1024x1024 is done during the sam preprocessing
                 if self._resize_mask:
                     box_1024 = (box_1024 / torch.tensor([256,256,256,256], device="cpu")) * 640 # Scale to 640
 
-
                 box_1024 = box_1024[:, None, :]  # (5, 1, 4)
-               # print(box_1024)
-
                 bounding_boxes = [box_1024]
-
-
-                from matplotlib import patches
-
-
-
-
-
-                # fig, ax = plt.subplots(figsize=(8, 8))
-                # ax.imshow(image)  # Show the image
-
-                # # Plot predicted boxes
-                # for box in bounding_boxes:
-                #     rect = patches.Rectangle(
-                #         (box[0], box[1]),  # x, y (top-left corner)
-                #         box[2] - box[0],  # width
-                #         box[3] - box[1],  # height
-                #         linewidth=2,
-                #         edgecolor='blue',
-                #         facecolor='none',
-                #         label='Predicted Box'
-                #     )
-                #     ax.add_patch(rect)
-
-                # plt.show()
-
-
-
-
-
-
-
 
 
 
             else:
                 bounding_boxes = self.get_bounding_box(binary_mask)
                 
-
 
 
             # Process the images and bboxes
@@ -310,37 +258,30 @@ class ImageMaskDataset(Dataset):
 
 
 
-
-
-
          
-            print(bounding_boxes, "\n\n", inputs['input_boxes'])
+            # print(bounding_boxes, "\n\n", inputs['input_boxes'])
 
             
-            from matplotlib import patches
+            # from matplotlib import patches
 
 
-            fig, ax = plt.subplots(figsize=(8, 8))
-            ax.imshow(inputs['pixel_values'].permute(1,2,0))  # Show the image
+            # fig, ax = plt.subplots(figsize=(8, 8))
+            # ax.imshow(inputs['pixel_values'].permute(1,2,0))  # Show the image
 
-            # Plot predicted boxes
-            for box in inputs['input_boxes']:
-                rect = patches.Rectangle(
-                    (box[0], box[1]),  # x, y (top-left corner)
-                    box[2] - box[0],  # width
-                    box[3] - box[1],  # height
-                    linewidth=2,
-                    edgecolor='blue',
-                    facecolor='none',
-                    label='Predicted Box'
-                )
-                ax.add_patch(rect)
+            # # Plot predicted boxes
+            # for box in inputs['input_boxes']:
+            #     rect = patches.Rectangle(
+            #         (box[0], box[1]),  # x, y (top-left corner)
+            #         box[2] - box[0],  # width
+            #         box[3] - box[1],  # height
+            #         linewidth=2,
+            #         edgecolor='blue',
+            #         facecolor='none',
+            #         label='Predicted Box'
+            #     )
+            #     ax.add_patch(rect)
 
-            plt.show()
-
-
-
-
+            # plt.show()
 
 
 
@@ -349,26 +290,15 @@ class ImageMaskDataset(Dataset):
             # Return individual masks if needed
             if self._return_individual_objects:
 
-              
-
-                # print(len(object_masks), box_1024.shape[0])
-            
-
-
                 # Ensure masks match bounding boxes
                 if len(object_masks) < box_1024.shape[0]:
 
-                    
                     # Pad with empty masks (zeros)
                     H, W = object_masks[0].shape[-2:]  # Get height and width
                     empty_mask = torch.zeros(H, W, dtype=torch.float32)  # Empty mask
 
-
                     while len(object_masks) < box_1024.shape[0]:
                         object_masks.append(empty_mask)
-
-
-
 
                 # Convert object masks to tensors
                 object_masks = [torch.tensor(obj_mask, dtype=torch.float32) for obj_mask in object_masks]
@@ -381,13 +311,8 @@ class ImageMaskDataset(Dataset):
                 inputs["ground_truth_mask"] = binary_mask
 
 
-            # # Print bounding box sizes
-       
-            # print(f"Bounding Boxes Shape: {bounding_boxes[0].shape}")  # Expected: (N, 1, 4)
-
-            # # Print ground truth mask size
-  
-            # print(f"Ground Truth Mask Shape: {inputs['ground_truth_mask'].shape}")  # Expected: (N, H, W)
+            # print(f"Bounding Boxes Shape: {bounding_boxes[0].shape}")
+            # print(f"Ground Truth Mask Shape: {inputs['ground_truth_mask'].shape}")
 
             return inputs
 
@@ -421,7 +346,14 @@ class ImageMaskDataset(Dataset):
             
             # Convert to PyTorch tensor and reshape (B, 1, 4)
             box_1024 = torch.tensor(bounding_boxes, dtype=torch.float32, device="cuda")  # (5, 4)
-            box_1024 = (box_1024 / torch.tensor([W, H, W, H], device="cuda")) * 1024  # Scale to 1024x1024
+
+
+            if self._resize_mask:
+                box_1024 = (box_1024 / torch.tensor([256,256,256,256], device="cpu")) * 1024 # Scale to 1024x1024
+            else:
+                box_1024 = (box_1024 / torch.tensor([W, H, W, H], device="cuda")) * 1024  # Scale to 1024x1024
+
+
             box_1024 = box_1024[:, None, :]  # (5, 1, 4)
 
 
@@ -435,9 +367,6 @@ class ImageMaskDataset(Dataset):
             }
 
 
-
-
-
         # Return as a dictionary
         return {
             "pixel_values": image,
@@ -449,27 +378,8 @@ class ImageMaskDataset(Dataset):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     # Display the image and ground truth mask
     def show_image_mask(self, idx):
-
-        
 
         # Get image and mask path
         image_path, mask_path = self.image_mask_pairs[idx]
@@ -499,6 +409,8 @@ class ImageMaskDataset(Dataset):
         plt.figtext(0.73, 0.05, f"Mask Shape: {mask.shape}", ha='center')
 
         plt.show()
+
+
 
 
     # Display the image, ground truth mask, and provided segmentation mask
@@ -544,6 +456,8 @@ class ImageMaskDataset(Dataset):
 
         plt.tight_layout()
         plt.show()
+
+
 
 
     # Overlay segmentation mask over image. Taken directly from SAM's Github repo
