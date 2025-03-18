@@ -70,7 +70,7 @@ def extract_individual_masks_from_coco(dataset_path, splits):
                 if 'segmentation' in annotation and isinstance(annotation['segmentation'], list):
                     for polygon in annotation['segmentation']:
                         pts = np.array(polygon, dtype=np.int32).reshape((-1, 2))
-                        cv2.fillPoly(obj_mask, [pts], color=255)  # Fill the polygon with class_id or 1
+                        cv2.fillPoly(obj_mask, [pts], color=class_id)  # Fill the polygon with class_id or 1
 
                 # Save mask with unique name
                 if obj_mask.max() > 0:  # Check if there is any non-zero value

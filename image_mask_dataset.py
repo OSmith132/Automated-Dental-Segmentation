@@ -27,7 +27,7 @@ class ImageMaskDataset(Dataset):
         self._resize_mask      = False # Resize the mask to 256x256 for comparison with output from SAM inference. This also resizes the bounding boxes returned from 
         self._return_individual_objects = False # Returns all object bboxes individually along with the image.
 
-        self._min_bounding_boxes = 25 # This needs to be changed depending on the max number of objects from all the images in the dataset
+        self._min_bounding_boxes = 35 # This needs to be changed depending on the max number of objects from all the images in the dataset
 
         # Get the dirs for images and masks
         self.split_dir = os.path.join(dataset_path, split)
