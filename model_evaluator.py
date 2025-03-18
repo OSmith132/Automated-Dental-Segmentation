@@ -116,12 +116,8 @@ class ModelEvaluator:
 
         self.dataset.return_as_sam = True
 
-        self.iou_scores.clear()
-        self.precision_scores.clear()
-        self.recall_scores.clear()
-        self.f1_scores.clear()
-        self.dice_scores.clear()
-        self.mcc_scores.clear()
+        # Clear Previous Metrics
+        self._clear_metrics()
         
         for idx in tqdm(range(len(self.dataset))):
             test_image = self.dataset[idx]["pixel_values"]
