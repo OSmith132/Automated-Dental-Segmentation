@@ -166,11 +166,32 @@ def visualize_all(class_counts, pixel_coverage, co_occurrence, split_class_count
 
 
 
+    # # Create a grouped bar chart
+    # bar_width = 0.25  # Width of each bar
+    # x = np.arange(len(class_names))  # Class indices
+    # for i, split in enumerate(split_names):
+    #     axes[3].bar(x + i * bar_width, split_data[split], width=bar_width, label=split)
+
+    # # Add labels and legend
+    # axes[3].set_title("Class Distribution Across Splits")
+    # axes[3].set_xlabel("Class")
+    # axes[3].set_ylabel("Number of Instances")
+    # axes[3].set_xticks(x + bar_width * (len(split_names) - 1) / 2)
+    # axes[3].set_xticklabels(class_names, rotation=45)
+    # axes[3].legend(title="Splits")
+
+    # plt.show()
+
     # Create a grouped bar chart
     bar_width = 0.25  # Width of each bar
     x = np.arange(len(class_names))  # Class indices
     for i, split in enumerate(split_names):
-        axes[3].bar(x + i * bar_width, split_data[split], width=bar_width, label=split)
+        bars = axes[3].bar(x + i * bar_width, split_data[split], width=bar_width, label=split)
+
+        # Add the height of each bar above it
+        for bar in bars:
+            height = bar.get_height()
+            axes[3].text(bar.get_x() + bar.get_width() / 2, height, str(int(height)), ha='center', va='bottom')
 
     # Add labels and legend
     axes[3].set_title("Class Distribution Across Splits")
@@ -181,6 +202,7 @@ def visualize_all(class_counts, pixel_coverage, co_occurrence, split_class_count
     axes[3].legend(title="Splits")
 
     plt.show()
+    
 
 
 

@@ -5,8 +5,7 @@ import cv2
 from PIL import Image
 from tqdm import tqdm # Progress bar
 
-# Class segment brightness (TESTING)
-class_brightness = 1
+
 
 # Define class IDs 
 class_mapping = {
@@ -21,15 +20,54 @@ class_mapping = {
 }
 
 
+
+# Define max ammount of images per class (undersampling) for this split:
+max_images_per_class = [3,2,1] # test, train, valid
+
+
+
+def clear_directory(directory):
+    """
+    Clears all files in the given directory.
+
+    Args:
+        directory (str): Path to the directory to clear.
+    """
+    if os.path.exists(directory):
+        for filename in os.listdir(directory):
+            file_path = os.path.join(directory, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)  # Remove the file
+
+
+
+
 # Creates segmentation masks from COCO annotations (output saved as PNG in the "masks" folder)
 def create_masks_from_coco(dataset_path, splits):
 
-    for split in splits:
+    for max_class_count_idx, split in enumerate(splits):
         # Define paths
         split_path = os.path.join(dataset_path, split)                 # test, train, valid folders
         json_file = os.path.join(split_path, "_annotations.coco.json") # COCO annotation file
         mask_dir = os.path.join(split_path, "masks")                   # Output directory for masks
         os.makedirs(mask_dir, exist_ok=True)                           # Ensure the directory exists
+
+
+        
+
+         # Clear existing files in the 'individual_masks' folder before extracting new ones (for undersampling)
+        if os.path.exists(mask_dir):  # Check if the directory exists
+            clear_directory(mask_dir)  # Remove all existing files
+
+
+        # Define class IDs for this split
+        class_count = [0,0,0,0,0,0,0]
+
+        # Define max class count for this split:
+        max_images = max_images_per_class[max_class_count_idx]
+
+
+
 
 
         # Load COCO annotations
@@ -69,24 +107,40 @@ def create_masks_from_coco(dataset_path, splits):
                 class_name = categories.get(annotation['category_id'], 'null')
 
                 # Get the class ID (colour)
-                class_id = class_mapping.get(class_name, class_mapping["null"])  * class_brightness
+                class_id = class_mapping.get(class_name, class_mapping["null"])
+
+
+
+
+
+
+                # If undersampling skip all objects belonging to a class that is full
+                if max_images:
+
+                    if class_count[class_id - 1] >= max_images:
+                        continue
+
+                    class_count[class_id - 1] += 1
+                    print("Saving Class: ",class_id - 1)
+
+
+
 
 
                 # Decode segmentation polygons
                 if ('segmentation' in annotation and isinstance(annotation['segmentation'], list)):
                     for polygon in annotation['segmentation']:
-                        # 
                         pts = np.array(polygon, dtype=np.int32).reshape((-1, 2))
 
                         # Fill the polygon with correct colour 
                         cv2.fillPoly(mask, [pts], color=class_id)
 
 
-
-            # Save mask 
-            mask_filename = os.path.splitext(img_info['file_name'])[0] + "-segmentation-mask.png"
-            mask_path = os.path.join(mask_dir, mask_filename)
-            Image.fromarray(mask).save(mask_path)
+            if mask.max() > 0:
+                # Save mask 
+                mask_filename = os.path.splitext(img_info['file_name'])[0] + "-segmentation-mask.png"
+                mask_path = os.path.join(mask_dir, mask_filename)
+                Image.fromarray(mask).save(mask_path)
 
         print(f"{split} masks successfully createdd and saved to {mask_dir}")
 

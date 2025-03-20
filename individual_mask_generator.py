@@ -17,6 +17,41 @@ class_mapping = {
     "null":    0,  # Default
 }
 
+
+
+
+
+
+# Define max ammount of images per class (undersampling) for this split:
+max_images_per_class = [3,2,1]
+
+
+
+
+
+
+
+def clear_directory(directory):
+    """
+    Clears all files in the given directory.
+
+    Args:
+        directory (str): Path to the directory to clear.
+    """
+    if os.path.exists(directory):
+        for filename in os.listdir(directory):
+            file_path = os.path.join(directory, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)  # Remove the file
+
+
+
+
+
+
+
+
+
 def extract_individual_masks_from_coco(dataset_path, splits):
     """
     Extracts individual masks for each segmented object from COCO annotations.
@@ -24,14 +59,28 @@ def extract_individual_masks_from_coco(dataset_path, splits):
 
     Args:
         dataset_path (str): Path to the dataset folder.
-        splits (list): List of dataset splits to process (e.g., ["train", "valid", "test"]).
+        splits (list): List of dataset splits to process (e.g. ["train", "valid", "test"]).
     """
-    for split in splits:
+    for max_class_count_idx, split in enumerate(splits):
         # Define paths
         split_path = os.path.join(dataset_path, split)  # test, train, valid folders
         json_file = os.path.join(split_path, "_annotations.coco.json")  # COCO annotation file
         mask_dir = os.path.join(split_path, "individual_masks")  # Output directory for individual object masks
         os.makedirs(mask_dir, exist_ok=True)  # Ensure the directory exists
+
+
+        # Clear existing files in the 'individual_masks' folder before extracting new ones (for undersampling)
+        if os.path.exists(mask_dir):  # Check if the directory exists
+            clear_directory(mask_dir)  # Remove all existing files
+
+
+        # Define class IDs for this split
+        class_count = [0,0,0,0,0,0,0]
+
+        # Define max class count for this split:
+        max_images = max_images_per_class[max_class_count_idx]
+
+
 
         # Load COCO annotations
         if not os.path.exists(json_file):
@@ -62,6 +111,23 @@ def extract_individual_masks_from_coco(dataset_path, splits):
 
                 # Get the class ID (color)
                 class_id = class_mapping.get(class_name, class_mapping["null"])
+
+
+                
+
+
+
+                # If undersampling skip all objects belonging to a class that is full
+                if max_images:
+
+                    if class_count[class_id - 1] >= max_images:
+                        continue
+
+                    class_count[class_id - 1] += 1
+                    print("Saving Class: ",class_id - 1)
+
+
+
 
                 # Create a black mask for this specific object
                 obj_mask = np.zeros((height, width), dtype=np.uint8)

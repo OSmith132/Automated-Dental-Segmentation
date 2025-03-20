@@ -22,8 +22,8 @@ class ImageMaskDataset(Dataset):
         self.dataset_path      = dataset_path
         self.split             = split
         
-        self._return_as_sam    = False # Preprocess image and mask before returng for use in fine-tuning SAM
-        self._return_as_medsam = False # Preprocess image and mas before returning for use in MedSAM Inference
+        self._preprocess_for_fine_tuning    = False # Preprocess image and mask before returng for use in fine-tuning SAM and MedSAM
+        self._return_as_medsam = False # Preprocess image and mask before returning for use in MedSAM Inference
         self._resize_mask      = False # Resize the mask to 256x256 for comparison with output from SAM inference. This also resizes the bounding boxes returned from 
         self._return_individual_objects = False # Returns all object bboxes individually along with the image.
 
@@ -39,15 +39,34 @@ class ImageMaskDataset(Dataset):
             print(f"No directory found {self.split_dir}")
             return
         
-        # Get list of image-mask pairs
-        self.image_mask_pairs = []
 
         # Store each image path
-        self.image_mask_pairs = [
-            (os.path.join(self.split_dir, filename), os.path.join(self.mask_dir, filename.replace(".jpg", "-segmentation-mask.png")))
-            for filename in tqdm(sorted(os.listdir(self.split_dir)))
-            if filename.endswith(".jpg") and os.path.isfile(os.path.join(self.split_dir, filename))
-        ]
+        # self.image_mask_pairs = [
+
+        #     (os.path.join(self.split_dir, filename), os.path.join(self.mask_dir, filename.replace(".jpg", "-segmentation-mask.png")))
+            
+        #     for filename in tqdm(sorted(os.listdir(self.split_dir)))
+
+
+        #     if filename.endswith(".jpg") and os.path.isfile(os.path.join(self.split_dir, filename)) and os.path.isfile(os.path.join(self.split_dir, filename.replace(".jpg", "-segmentation-mask.png")))
+        # ]
+
+
+
+
+        # Get list of image-mask pairs where both exist
+        self.image_mask_pairs = []
+
+        for filename in tqdm(sorted(os.listdir(self.split_dir))):
+            if filename.endswith(".jpg"):  # Ensure it's an image file
+                image_path = os.path.join(self.split_dir, filename)
+                mask_filename = filename.replace(".jpg", "-segmentation-mask.png")
+                mask_path = os.path.join(self.mask_dir, mask_filename)
+
+                if os.path.isfile(image_path) and os.path.isfile(mask_path):  # Ensure both exist
+                    self.image_mask_pairs.append((image_path, mask_path))
+
+        print(f"Total valid image-mask pairs found: {len(self.image_mask_pairs)}")
         
 
 
@@ -68,15 +87,15 @@ class ImageMaskDataset(Dataset):
 
 
     @property
-    def return_as_sam(self):
-        return self._return_as_sam
+    def preprocess_for_fine_tuning(self):
+        return self._preprocess_for_fine_tuning
 
-    @return_as_sam.setter
-    def return_as_sam(self, value):
+    @preprocess_for_fine_tuning.setter
+    def preprocess_for_fine_tuning(self, value):
         if not isinstance(value, bool):
             raise ValueError("variable must be a boolean value")
         self._return_as_medsam = False
-        self._return_as_sam    = value
+        self._preprocess_for_fine_tuning    = value
 
 
     @property
@@ -87,7 +106,7 @@ class ImageMaskDataset(Dataset):
     def return_as_medsam(self, value):
         if not isinstance(value, bool):
             raise ValueError("variable must be a boolean value")
-        self._return_as_sam    = False
+        self._preprocess_for_fine_tuning    = False
         self._return_as_medsam = value
 
 
@@ -123,14 +142,29 @@ class ImageMaskDataset(Dataset):
         # Extract filename without extension
         image_filename = os.path.splitext(os.path.basename(image_path))[0]
 
+
+
+
+
+
+
+
         # Find all relevant mask files
         object_mask_paths = sorted([
             os.path.join(mask_dir, f) for f in os.listdir(mask_dir)
             if f.startswith(image_filename) and f.endswith(".png")
         ])
 
+
+
+
+
+
+        
+
         if not object_mask_paths:
-            raise FileNotFoundError(f"No masks found for {image_filename} in {mask_dir}")
+            #raise FileNotFoundError(f"No masks found for {image_filename} in {mask_dir}")
+            return
 
         # Resize the masks to fit the output of the sam model. This will be used to calculate the loss function, but also resizes the masks so be careful (~4.5 hour wasted)
         # Load masks as grayscale NumPy arrays
@@ -239,7 +273,7 @@ class ImageMaskDataset(Dataset):
 
 
         # Preprocess and return tensors for use in fine-tuning SAM
-        if self._return_as_sam:
+        if self._preprocess_for_fine_tuning:
 
             # object_masks = self._find_object_masks(image_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks") ) # Get indiviidual binary mask for each object
             # mask = torch.tensor(mask, dtype=torch.float32)
@@ -255,6 +289,13 @@ class ImageMaskDataset(Dataset):
 
                 # Get object masks using _find_object_masks (each mask for each object)
                 object_masks = self._find_object_masks(image_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks"))
+
+
+
+                
+                if not object_masks:
+                    print("penis")
+                    return
 
                 # Get object classes
 
