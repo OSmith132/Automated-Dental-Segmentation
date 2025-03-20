@@ -133,7 +133,7 @@ class ImageMaskDataset(Dataset):
             raise FileNotFoundError(f"No masks found for {image_filename} in {mask_dir}")
 
         # Resize the masks to fit the output of the sam model. This will be used to calculate the loss function, but also resizes the masks so be careful (~4.5 hour wasted)
-        # Load masks as binary NumPy arrays
+        # Load masks as grayscale NumPy arrays
         if self._resize_mask:
             #object_masks = [cv2.threshold(cv2.resize(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE), (256, 256)), 127, 255, cv2.THRESH_BINARY)[1]for mask_path in object_mask_paths]
             object_masks = [
@@ -156,10 +156,10 @@ class ImageMaskDataset(Dataset):
 
         # add perturbation to bounding box coordinates
         H, W = ground_truth_map.shape
-        x_min = max(0, x_min - np.random.randint(0, 20))
-        x_max = min(W, x_max + np.random.randint(0, 20))
-        y_min = max(0, y_min - np.random.randint(0, 20))
-        y_max = min(H, y_max + np.random.randint(0, 20))
+        x_min = max(0, x_min - np.random.randint(5, 20))
+        x_max = min(W, x_max + np.random.randint(5, 20))
+        y_min = max(0, y_min - np.random.randint(5, 20))
+        y_max = min(H, y_max + np.random.randint(5, 20))
         bbox = [x_min, y_min, x_max, y_max]
 
         return bbox
@@ -179,10 +179,41 @@ class ImageMaskDataset(Dataset):
             bboxes.append(self.get_bounding_box(obj))
 
 
-        while len(bboxes) < self._min_bounding_boxes:   # MIN NUMBE OF BBOXES !!!!!
+        while len(bboxes) < self._min_bounding_boxes:
              bboxes.append([0,0,0,0])
 
         return bboxes
+    
+
+
+
+
+
+
+
+
+    
+    def _get_bounding_boxes_gt(self, mask, bounding_boxes):
+        object_masks = []
+
+        for box in bounding_boxes:
+            x_min, y_min, x_max, y_max = map(int, box)  # Convert to int for indexing
+
+            # Create a mask of the same size as the original, filled with zeros (black)
+            object_mask = np.zeros_like(mask, dtype=np.uint8)
+
+            # Crop the region of interest from the mask
+            cropped_mask = mask[y_min:y_max, x_min:x_max]  # Crop mask based on bounding box
+            
+            # Place the cropped mask into the black mask
+            object_mask[y_min:y_max, x_min:x_max] = cropped_mask
+
+            # Add the mask to the list
+            object_masks.append(object_mask)
+
+        return object_masks
+
+
 
 
 
@@ -213,11 +244,11 @@ class ImageMaskDataset(Dataset):
             # object_masks = self._find_object_masks(image_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks") ) # Get indiviidual binary mask for each object
             # mask = torch.tensor(mask, dtype=torch.float32)
 
-            binary_mask = (mask > 0).astype(np.float32)  # Convert to binary (0 or 1)
+            binary_mask = (mask > 0).astype(np.float32)  # Convert to binary
 
 
 
-            bounding_boxes = None 
+            bounding_boxes = None
 
 
             if self._return_individual_objects:
@@ -225,14 +256,31 @@ class ImageMaskDataset(Dataset):
                 # Get object masks using _find_object_masks (each mask for each object)
                 object_masks = self._find_object_masks(image_path, os.path.join(os.path.dirname(os.path.dirname(mask_path)), "individual_masks"))
 
+                # Get object classes
+
                 # Convert each object mask to binary
-                object_masks = [((obj_mask > 0).astype(np.float32)) for obj_mask in object_masks]
+                #object_masks = [((obj_mask > 0).astype(np.float32)) for obj_mask in object_masks]
 
                 # Get bounding boxes (scaled to 1024x1024)
                 bounding_boxes = self.get_object_bounding_boxes(idx)
                 bounding_boxes = torch.tensor(bounding_boxes, dtype=torch.float32)
 
-                
+
+
+
+
+
+
+                # Get GT mask from within bounding boxes
+                object_masks = self._get_bounding_boxes_gt(mask, bounding_boxes)
+
+
+
+
+
+
+
+
                 # Convert to PyTorch tensor and reshape (B, 1, 4)
                 box_1024 = torch.tensor(bounding_boxes, dtype=torch.float32, device="cpu")  # (5, 4)
 
@@ -293,7 +341,7 @@ class ImageMaskDataset(Dataset):
                 # Ensure masks match bounding boxes
                 if len(object_masks) < box_1024.shape[0]:
 
-                    # Pad with empty masks (zeros)
+                    # Pad with empty masks (zeros) to ensure all stacks the same size
                     H, W = object_masks[0].shape[-2:]  # Get height and width
                     empty_mask = torch.zeros(H, W, dtype=torch.float32)  # Empty mask
 
@@ -304,7 +352,8 @@ class ImageMaskDataset(Dataset):
                 object_masks = [torch.tensor(obj_mask, dtype=torch.float32) for obj_mask in object_masks]
 
                 # Stack into a single tensor (num_bboxes, H, W)
-                inputs["ground_truth_mask"] = torch.stack(object_masks)
+                inputs["obj_ground_truth_masks"] = torch.stack(object_masks)
+                inputs["ground_truth_mask"] = mask
 
 
             else:
@@ -320,7 +369,7 @@ class ImageMaskDataset(Dataset):
 
 
 
-        # Preprocess and return tensors for use in fine-tuning MedSAM
+        # Preprocess and return tensors for use in evaluating MedSAM
         if self._return_as_medsam:
 
             # Resize image to 1024x1024 for MedSAM

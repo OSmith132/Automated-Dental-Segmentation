@@ -129,6 +129,7 @@ def visualize_all(class_counts, pixel_coverage, co_occurrence, split_class_count
 
     # Pixel Coverage Plot
     pixel_values = list(pixel_coverage.values())
+    print(pixel_values)
     ax = sns.barplot(ax=axes[1], x=class_names, y=pixel_values, palette='magma')
 
     # Annotate bars and adjust y-axis limits
