@@ -260,6 +260,15 @@ class ImageMaskDataset(Dataset):
 
         # Load image as RGB (3 channels)
         image = cv2.imread(image_path)  # Loads the image in BGR
+
+
+        
+        print(f"IMAGE PARTH--------------------------{image_path}")
+
+        
+
+
+
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
 
         # Load mask as grayscale

@@ -22,7 +22,7 @@ class_mapping = {
 
 
 # Define max ammount of images per class (undersampling) for this split:
-max_images_per_class = [3,2,1] # test, train, valid
+max_images_per_class = [None,None,None] # test, train, valid
 
 
 
@@ -99,6 +99,11 @@ def create_masks_from_coco(dataset_path, splits):
 
             # Filter annotations for the current image
             img_annotations = [annotation for annotation in annotations if annotation['image_id'] == img_info['id']]
+
+
+            # Sort annotations by area in descending order
+            img_annotations.sort(key=lambda annotation: annotation['area'], reverse=True)
+
 
             # Apply all relevant annotations
             for annotation in img_annotations:

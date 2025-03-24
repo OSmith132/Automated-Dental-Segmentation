@@ -23,7 +23,8 @@ class_mapping = {
 
 
 # Define max ammount of images per class (undersampling) for this split:
-max_images_per_class = [3,2,1]
+max_images_per_class = [None,None,None]
+
 
 
 
