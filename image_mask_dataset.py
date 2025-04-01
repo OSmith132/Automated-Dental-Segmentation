@@ -438,13 +438,13 @@ class ImageMaskDataset(Dataset):
             H, W, _ = image.shape
             
             # Convert to PyTorch tensor and reshape (B, 1, 4)
-            box_1024 = torch.tensor(bounding_boxes, dtype=torch.float32, device="cuda")  # (5, 4)
+            box_1024 = torch.tensor(bounding_boxes, dtype=torch.float32, device="cpu")  # (5, 4)
 
 
             if self._resize_mask:
                 box_1024 = (box_1024 / torch.tensor([256,256,256,256], device="cpu")) * 1024 # Scale to 1024x1024
             else:
-                box_1024 = (box_1024 / torch.tensor([W, H, W, H], device="cuda")) * 1024  # Scale to 1024x1024
+                box_1024 = (box_1024 / torch.tensor([W, H, W, H], device="cpu")) * 1024  # Scale to 1024x1024
 
 
             box_1024 = box_1024[:, None, :]  # (5, 1, 4)
