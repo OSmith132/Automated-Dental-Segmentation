@@ -13,7 +13,7 @@ class ModelEvaluator:
         self.dataset = dataset
 
         # Initialize metrics
-        self.dice_metric = DiceMetric(include_background=True, reduction="mean")
+        self.dice_metric = DiceMetric(include_background=False, reduction="mean")
         self.iou_metric = JaccardIndex(task="binary").to("cuda")
         self.precision_metric = Precision(task="binary").to("cuda")
         self.recall_metric = Recall(task="binary").to("cuda")
@@ -37,6 +37,99 @@ class ModelEvaluator:
         self.f1_scores.clear
         self.dice_scores.clear
         self.mcc_scores.clear
+
+
+
+
+
+
+
+    def _remove_invalid_boxes(self, input_boxes, obj_ground_truth_masks):
+        # Create a mask to identify input_boxes that are exactly [0, 0, 0, 0]
+        valid_mask = ~(input_boxes == torch.tensor([0, 0, 0, 0], dtype=input_boxes.dtype, device=input_boxes.device)).all(dim=-1)
+
+        # Filter input boxes and corresponding masks for each image in the batch (batch size = 1)
+        filtered_input_boxes = input_boxes[valid_mask]
+        filtered_obj_ground_truth_masks = obj_ground_truth_masks[valid_mask]
+
+        # Return filtered input boxes and ground truth masks, maintaining batch size of 1
+        return filtered_input_boxes.unsqueeze(0), filtered_obj_ground_truth_masks.unsqueeze(0)
+
+
+
+
+
+
+
+    def evaluate_medsam_model(self, test_dataloader):
+        # Set model to evaluation mode
+        self.model.eval()
+
+        # Clear previous metrics
+        self._clear_metrics()
+
+        # Iterate over validation dataset
+        with torch.no_grad():
+            for batch in tqdm(test_dataloader):
+                # Get batch values for inference
+                pixel_values = batch["pixel_values"].to("cuda")
+                input_boxes = batch["input_boxes"].to("cuda")
+                obj_ground_truth_masks = batch["obj_ground_truth_masks"].float().to("cuda").squeeze(1)
+
+                # Remove padding on input_boxes and obj_ground_truth_masks
+                for image, input_box, obj_mask in zip(pixel_values, input_boxes, obj_ground_truth_masks):
+                    input_box, obj_mask = self._remove_invalid_boxes(input_box, obj_mask)
+
+                    # If the input somehow has no object masks, skip
+                    if input_box.shape[1] > 0:
+                        # Forward pass
+                        outputs = self.model(
+                            pixel_values=image.unsqueeze(0),  # Add batch dimension back
+                            input_boxes=input_box,
+                            multimask_output=False
+                        )
+
+                        # Get predicted masks and ground truth masks
+                        predicted_masks = outputs.pred_masks.squeeze(2)  # Remove extra singleton dimension from predicted masks
+                
+                        # Convert object ground truth masks to binary
+                        obj_mask = (obj_mask > 0).float()
+
+                        # Ensure the predicted and ground truth masks have the same shape
+                        predicted_masks = torch.sigmoid(predicted_masks)
+
+                        # Compute metrics
+                        predicted_masks_bin = (predicted_masks > 0.5).cpu().numpy().squeeze()
+                        obj_mask_bin = obj_mask.cpu().numpy().squeeze()
+
+                        # Convert to tensors for MONAI & torch metrics
+                        predicted_masks_tensor = torch.tensor(predicted_masks_bin, dtype=torch.float32).unsqueeze(0).to("cuda")
+                        obj_mask_tensor = torch.tensor(obj_mask_bin, dtype=torch.float32).unsqueeze(0).to("cuda")
+
+                        # Dice, IoU, Precision, Recall, F1, MCC
+                        self.dice_scores.append(self.dice_metric(predicted_masks_tensor.unsqueeze(0), obj_mask_tensor.unsqueeze(0)).item())
+                        self.iou_scores.append(self.iou_metric(predicted_masks_tensor, obj_mask_tensor).item())
+                        self.precision_scores.append(self.precision_metric(predicted_masks_tensor, obj_mask_tensor).item())
+                        self.recall_scores.append(self.recall_metric(predicted_masks_tensor, obj_mask_tensor).item())
+                        self.f1_scores.append(self.f1_metric(predicted_masks_tensor, obj_mask_tensor).item())
+                        self.mcc_scores.append(self.mcc_metric(predicted_masks_tensor, obj_mask_tensor).item())
+                    else:
+                        # Debug print if no masks found
+                        print("No masks found for:", input_box)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     # Evaluate SAM and SAM based models
@@ -72,7 +165,7 @@ class ModelEvaluator:
             medsam_seg_prob = torch.sigmoid(outputs.pred_masks.squeeze(1)).cpu().numpy().squeeze()
 
             # Convert to binary mask
-            medsam_seg = (medsam_seg_prob > 0.5).astype(np.uint8)
+            medsam_seg = (medsam_seg_prob > 0.7).astype(np.uint8)  # Threshold for prediction
             ground_truth_mask = (ground_truth_mask > 0).astype(np.uint8)  # Ensure binary GT mask
 
             # Convert to tensors for MONAI & torch
@@ -151,8 +244,6 @@ class ModelEvaluator:
 
 
 
-
-
     @torch.no_grad()
     def medsam_inference(self, img_embed, bboxes, H, W):
         """Perform inference using MedSAM model to generate segmentation masks."""
@@ -186,10 +277,7 @@ class ModelEvaluator:
         return medsam_seg
     
 
-
-
-
-    def evaluate_medsam_model(self):
+    def evaluate_medsam_base_model(self):
         """Evaluates MedSAM model on the test dataset."""
 
         # Ensure dataset returns data in MedSAM format
