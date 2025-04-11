@@ -1,0 +1,8 @@
+{
+  "alpha": 0.5848183190428752,
+  "beta": 0.43869479639715797,
+  "gamma": 3.112516251969679,
+  "include_background": false,
+  "loss": "dice",
+  "squared_pred": true
+}
